@@ -4,13 +4,9 @@ import { z } from 'zod';
 import { Client, IClientInitOptions } from 'sitecore-personalize-tenant-sdk';
 import { listPersonalizationExperiences, mapRegion } from './services/Personalize.service';
 
-function getPersonalizeClient(headers: Headers) {
-	const clientId = headers.get('x-sitecore-client-id') || '';
-	const clientSecret = headers.get('x-sitecore-client-secret') || '';
-	const region = headers.get('x-sitecore-region') || '';
-
+function getPersonalizeClient(clientId: string, clientSecret: string, region: string): Client {
 	if (!clientId || !clientSecret || !region) {
-		throw new Error('Missing headers: x-sitecore-client-id, x-sitecore-client-secret, x-sitecore-region');
+		throw new Error('Missing headers or Issue with Durable Object: x-sitecore-client-id, x-sitecore-client-secret, x-sitecore-region');
 	}
 
 	return new Client({
@@ -27,16 +23,38 @@ export class McpSession extends McpAgent {
 		version: '1.0.0',
 	});
 
+	// Add a class property to store the client
+	private personalizeClient: Client | undefined;
+
 	async init() {
+		const { clientId, clientSecret, region } = this.props || {};
+
+		try {
+			// Assign directly to the class property instead of to a local variable
+			this.personalizeClient = getPersonalizeClient(clientId as string, clientSecret as string, region as string);
+
+			if (!this.personalizeClient) {
+				throw new Error(
+					'Failed to initialize Sitecore Personalize client. Ensure that x-sitecore-client-id, x-sitecore-client-secret, and x-sitecore-region headers are provided.'
+				);
+			}
+		} catch (error) {
+			console.error('Error initializing McpSession:', error);
+			throw new Error(
+				'Failed to initialize McpSession. Ensure that x-sitecore-client-id, x-sitecore-client-secret, and x-sitecore-region headers are provided.'
+			);
+		}
+
 		this.server.tool(
 			'list_personalization_experiences',
 			{}, // No parameters required based on your original code
 			async (_params, req) => {
 				try {
-					const headers = req.authInfo?.extra?.headers;
-					const personalizeClient = getPersonalizeClient(headers as any);
+					if (!this.personalizeClient) {
+						throw new Error('Personalize client is not initialized.');
+					}
 
-					const experiences = await listPersonalizationExperiences(_params, personalizeClient);
+					const experiences = await listPersonalizationExperiences(_params, this.personalizeClient);
 
 					return {
 						content: [
@@ -58,10 +76,6 @@ export class McpSession extends McpAgent {
 				}
 			}
 		);
-
-		this.server.tool('add', { a: z.number(), b: z.number() }, async ({ a, b }) => ({
-			content: [{ type: 'text', text: String(a + b) }],
-		}));
 	}
 }
 
@@ -70,11 +84,45 @@ export default {
 		const url = new URL(request.url);
 
 		if (url.pathname === '/sse' || url.pathname === '/sse/message') {
-			return McpSession.serveSSE('/sse').fetch(request, env, ctx);
+			// Pass Sitecore headers through to the SSE handler
+			const clientId = request.headers.get('x-sitecore-client-id');
+			const clientSecret = request.headers.get('x-sitecore-client-secret');
+			const region = request.headers.get('x-sitecore-region');
+
+			// Create a new request with the same properties but including auth info
+			const mcpRequest = new Request(request, {
+				headers: request.headers,
+			});
+
+			// Add auth info to the context
+			ctx.props = {
+				'x-sitecore-client-id': clientId,
+				'x-sitecore-client-secret': clientSecret,
+				'x-sitecore-region': region,
+			};
+
+			return McpSession.serveSSE('/sse').fetch(mcpRequest, env, ctx);
 		}
 
 		if (url.pathname === '/mcp') {
-			return McpSession.serve('/mcp').fetch(request, env, ctx);
+			// Pass Sitecore headers through to the MCP handler
+			const clientId = request.headers.get('x-sitecore-client-id');
+			const clientSecret = request.headers.get('x-sitecore-client-secret');
+			const region = request.headers.get('x-sitecore-region');
+
+			// Create a new request with the same properties but including auth info
+			const mcpRequest = new Request(request, {
+				headers: request.headers,
+			});
+
+			// Add auth info to the context
+			ctx.props = {
+				'x-sitecore-client-id': clientId,
+				'x-sitecore-client-secret': clientSecret,
+				'x-sitecore-region': region,
+			};
+
+			return McpSession.serve('/mcp').fetch(mcpRequest, env, ctx);
 		}
 
 		return new Response('Not found', { status: 404 });
