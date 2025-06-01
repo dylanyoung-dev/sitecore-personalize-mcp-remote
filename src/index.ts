@@ -27,6 +27,20 @@ export class McpSession extends McpAgent {
 	private personalizeClient: Client | undefined;
 
 	async init() {
+		console.log(
+			'McpSession.init called with props:',
+			JSON.stringify(
+				{
+					props: this.props,
+					clientId: this.props?.clientId ? '***' : undefined,
+					clientSecret: this.props?.clientSecret ? '***' : undefined,
+					region: this.props?.region,
+				},
+				null,
+				2
+			)
+		);
+
 		const { clientId, clientSecret, region } = this.props || {};
 
 		try {
@@ -53,7 +67,8 @@ export class McpSession extends McpAgent {
 					if (!this.personalizeClient) {
 						throw new Error('Personalize client is not initialized.');
 					}
-
+					console.log('token: ', this.personalizeClient.options.accessToken);
+					console.log('Attempting to call tool: list_personalization_experiences');
 					const experiences = await listPersonalizationExperiences(_params, this.personalizeClient);
 
 					return {
@@ -84,24 +99,28 @@ export default {
 		const url = new URL(request.url);
 
 		if (url.pathname === '/sse' || url.pathname === '/sse/message') {
-			// Pass Sitecore headers through to the SSE handler
-			const clientId = request.headers.get('x-sitecore-client-id');
-			const clientSecret = request.headers.get('x-sitecore-client-secret');
-			const region = request.headers.get('x-sitecore-region');
+			try {
+				// Pass Sitecore headers through to the SSE handler
+				const clientId = request.headers.get('x-sitecore-client-id');
+				const clientSecret = request.headers.get('x-sitecore-client-secret');
+				const region = request.headers.get('x-sitecore-region');
 
-			// Create a new request with the same properties but including auth info
-			const mcpRequest = new Request(request, {
-				headers: request.headers,
-			});
+				// Create a new request with the same properties but including auth info
+				const mcpRequest = new Request(request);
 
-			// Add auth info to the context
-			ctx.props = {
-				'x-sitecore-client-id': clientId,
-				'x-sitecore-client-secret': clientSecret,
-				'x-sitecore-region': region,
-			};
+				// Add auth info to the context
+				ctx.props = {
+					clientId,
+					clientSecret,
+					region,
+				};
 
-			return McpSession.serveSSE('/sse').fetch(mcpRequest, env, ctx);
+				return McpSession.serveSSE('/sse').fetch(mcpRequest, env, ctx);
+			} catch (error) {
+				// Debug: Log any errors
+				console.error('Error processing SSE request:', error);
+				return new Response(`Error processing request: ${error instanceof Error ? error.message : String(error)}`, { status: 500 });
+			}
 		}
 
 		if (url.pathname === '/mcp') {
