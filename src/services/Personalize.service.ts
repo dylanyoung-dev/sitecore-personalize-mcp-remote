@@ -36,7 +36,7 @@ export const getPersonalizeClient = (props?: { clientId?: string; clientSecret?:
 	return client;
 };
 
-export const createPersonalizationExperience = async (args: any, client: Client) => {
+export const createPersonalizationExperience = async (args: any, client: Client | undefined) => {
 	if (args == undefined || client == undefined)
 		return {
 			status: 'error',
@@ -92,6 +92,7 @@ export const createPersonalizationExperience = async (args: any, client: Client)
 		return {
 			status: 'success',
 			message: 'Personalization experience created successfully.',
+			data: response,
 		};
 	} catch (error: any) {
 		return {

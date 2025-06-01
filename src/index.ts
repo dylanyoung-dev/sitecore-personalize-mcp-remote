@@ -1,9 +1,13 @@
 import { McpAgent } from 'agents/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { Client } from 'sitecore-personalize-tenant-sdk';
-import { getPersonalizeClient, listPersonalizationExperiences, mapRegion } from './services/Personalize.service';
+import { Client, IFlowDefinition } from 'sitecore-personalize-tenant-sdk';
+import {
+	createPersonalizationExperience,
+	getPersonalizeClient,
+	listPersonalizationExperiences,
+	mapRegion,
+} from './services/Personalize.service';
 import { logDebug } from './utils/debug.utils';
-import { registerCommonTools } from './tools/common';
 import z from 'zod';
 
 // Define our MCP agent with tools
@@ -22,18 +26,22 @@ export class McpSession extends McpAgent {
 			propsKeys: this.props ? Object.keys(this.props) : [],
 		});
 
-		// Another Attempt - The TypeScript SDK is Garbage
+		// Another Attempt to create a better devex experience - The TypeScript SDK is Garbage
 		//registerCommonTools(this.server);
+
+		//#region Common Testing Tool (echo)
 		this.server.tool('echo', { message: z.string() }, async ({ message }) => {
 			logDebug('echo tool INVOKED DIRECTLY', { message });
 			return {
 				content: [{ type: 'text', text: `Echo: ${message}` }],
 			};
 		});
+		// #endregion
 
-		//#region list_personalization_experiences
+		//#region list_personalize_experiences
 		this.server.tool(
 			'list_personalization_experiences',
+			'Lists all personalization experiences available in the Sitecore Personalize instance.',
 			{}, // No parameters required based on your original code
 			async () => {
 				try {
@@ -48,6 +56,12 @@ export class McpSession extends McpAgent {
 								text: JSON.stringify(experiences, null, 2),
 							},
 						],
+						// structuredContent: experiences.data.map((exp: IFlowDefinition) => ({
+						// 	name: exp.name,
+						// 	friendlyId: exp.friendlyId,
+						// 	type: exp.type,
+						// 	status: exp.status,
+						// })),
 					};
 				} catch (error) {
 					logDebug('Error in list_personalization_experiences handler', {
@@ -62,6 +76,82 @@ export class McpSession extends McpAgent {
 								text: `Error listing personalization experiences: ${error instanceof Error ? error.message : 'Unknown error'}`,
 							},
 						],
+					};
+				}
+			}
+		);
+		//#endregion
+
+		//#region create_personalize_experience
+		this.server.tool(
+			'create_personalize_experience',
+			'Creates a new personalization experience in Sitecore Personalize.',
+			{
+				name: z.string().describe('The name of the personalization experience.'),
+				type: z.enum(['Web', 'API', 'Triggered']).describe('The type of the experience.'),
+				channels: z
+					.array(z.enum(['Call Center', 'Email', 'Mobile App', 'Mobile Web', 'Web', 'SMS']))
+					.describe('The channels for the experience.'),
+				assets: z
+					.object({
+						html: z.string().optional().describe('The HTML content for the experience, use pure HTML only.'),
+						css: z.string().optional().describe('The CSS content for the experience, do not use precompiled CSS, only pure CSS.'),
+						javascript: z
+							.string()
+							.optional()
+							.describe('The JS content for the experience which needs to use Nashorn Engine compatible ES5 Javascript.'),
+						freemarker: z
+							.string()
+							.optional()
+							.describe('This is used to define the API response information using free marker syntax for the experience.'),
+					})
+					.optional()
+					.describe('Assets for the personalization experience'),
+			},
+			async ({ name, type, channels, assets }) => {
+				try {
+					logDebug('create_personalize_experience tool invoked', { name, type, channels, assetsProvided: !!assets });
+
+					const experienceData = {
+						name,
+						type,
+						channels,
+						assets: assets || {},
+					};
+
+					const result = await createPersonalizationExperience(experienceData, this.personalizeClient);
+
+					return {
+						content: [
+							{
+								type: 'text',
+								text: `Created personalization experience: ${name} (Type: ${type}, Channels: ${channels.join(', ')})`,
+							},
+						],
+						structuredContent: {
+							success: result.status === 'success',
+							message: result.message,
+							data: result.status === 'success' ? result.data : undefined,
+							experienceData,
+						},
+					};
+				} catch (error) {
+					logDebug('Error in create_personalize_experience handler', {
+						errorMessage: error instanceof Error ? error.message : 'Unknown error',
+						errorStack: error instanceof Error ? error.stack : undefined,
+					});
+
+					return {
+						content: [
+							{
+								type: 'text',
+								text: `Error creating personalization experience: ${error instanceof Error ? error.message : 'Unknown error'}`,
+							},
+						],
+						structuredContent: {
+							success: false,
+							message: error instanceof Error ? error.message : 'Unknown error',
+						},
 					};
 				}
 			}
